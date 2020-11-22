@@ -1,0 +1,9 @@
+.*
+*.dtb
+*.ko
+*.mod
+*.mod.c
+*.o
+Module.symvers
+modules.order
+!.gitignore

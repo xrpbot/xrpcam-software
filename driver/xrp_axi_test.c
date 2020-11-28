@@ -279,6 +279,7 @@ static int fpga_init(struct device *dev)
     struct device_node *dt_fpga_region, *dt_fpga_mgr;
     struct fpga_manager *fpga_mgr;
     struct fpga_image_info *img_info;
+    int ret = 0;
 
     dt_fpga_region = of_find_compatible_node(NULL, NULL, "fpga-region");
     if(!dt_fpga_region) {
@@ -301,18 +302,31 @@ static int fpga_init(struct device *dev)
     }
 
     img_info = fpga_image_info_alloc(dev);
+    if(!img_info) {
+        ret = -ENOMEM;
+        goto out;
+    }
     img_info->firmware_name = devm_kstrdup(dev, "zynq_pl_image.bin", GFP_KERNEL);
+    if(!img_info->firmware_name) {
+        ret = -ENOMEM;
+        goto out;
+    }
 
-    fpga_mgr_lock(fpga_mgr);
+    ret = fpga_mgr_lock(fpga_mgr);
+    if(ret != 0) {
+        goto out;
+    }
 
-    fpga_mgr_load(fpga_mgr, img_info);
+    ret = fpga_mgr_load(fpga_mgr, img_info);
 
     fpga_mgr_unlock(fpga_mgr);
+
+out:
     fpga_mgr_put(fpga_mgr);
 
     fpga_image_info_free(img_info);
 
-    return 0;
+    return ret;
 }
 
 static int xatest_probe(struct platform_device *pdev)
@@ -328,7 +342,7 @@ static int xatest_probe(struct platform_device *pdev)
     xatest_dev.miscdev.parent = &pdev->dev;
 
     ret = fpga_init(&pdev->dev);
-    if(ret < 0) {
+    if(ret != 0) {
         dev_err(&pdev->dev, "failed to init FPGA");
         return ret;
     }

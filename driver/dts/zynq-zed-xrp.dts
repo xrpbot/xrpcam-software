@@ -68,5 +68,7 @@
         status = "okay";
         compatible = "xrp,axi-test";
         reg = < 0x40000000 0x20 >;
+        clocks = < &clkc 15 >;
+        clock-names = "clk";
     };
 };

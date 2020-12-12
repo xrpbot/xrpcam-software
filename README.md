@@ -20,6 +20,10 @@ happens on an [Avnet Zedboard](http://zedboard.org/product/zedboard).
 The gateware is written in [nMigen](https://github.com/nmigen/nmigen), a
 modern, Python-based hardware description language.
 
+
+Zynq details
+------------
+
 Xilinx maintains forked versions of U-Boot and the Linux kernel for the Zynq,
 but enough of their changes have been upstreamed that mainline U-Boot/Linux
 works quite well. We use a recent mainline kernel (Linux 5.7.0) in this project.
@@ -37,6 +41,14 @@ responsible for loading our gateware into the PL before communicating with it.
 By putting the driver into a kernel module, it becomes possible to try out new
 bitstreams without rebooting (because the bitstream is reloaded every time the
 module is initialized).
+
+The PS provides 4 clocks to the PL. These clocks have to be configured from the
+PS, through the Linux [Clock
+Framework](https://www.kernel.org/doc/html/latest/core-api/kernel-api.html#clock-framework).
+This is also handled by our driver. The Zedboard additionally attaches an
+external 100 MHz oscillator directly to the PL, but later Zynq devboards (such
+as the Microzed) do not do that any longer. We do not use that clock input in
+our gateware.
 
 
 AXI test

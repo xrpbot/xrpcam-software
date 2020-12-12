@@ -10,6 +10,7 @@
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/of.h>
+#include <linux/clk.h>
 #include <linux/fpga/fpga-mgr.h>
 #include <asm/io.h>
 
@@ -19,6 +20,7 @@ struct xatest_device {
     struct miscdevice miscdev;
     struct device *dev;
     void __iomem *regs;
+    struct clk *clk;
 };
 
 static u32 xatest_read(struct xatest_device *xadev, u32 reg)
@@ -333,6 +335,7 @@ static int __init xatest_probe(struct platform_device *pdev)
 {
     int ret;
     struct resource *res;
+    struct clk *clk;
 
     /* only one device is supported */
     if(xatest_dev.dev)
@@ -352,20 +355,47 @@ static int __init xatest_probe(struct platform_device *pdev)
     if(IS_ERR(xatest_dev.regs))
         return PTR_ERR(xatest_dev.regs);
 
+    clk = devm_clk_get(&pdev->dev, NULL);
+    if(IS_ERR(clk)) {
+        dev_err(&pdev->dev, "failed to get clock");
+        return PTR_ERR(clk);
+    }
+
+    ret = clk_set_rate(clk, 100000000);
+    if(ret != 0) {
+        dev_err(&pdev->dev, "failed to set clock rate");
+        return ret;
+    }
+
+    ret = clk_prepare_enable(clk);
+    if(ret != 0) {
+        dev_err(&pdev->dev, "failed to enable clock");
+        return ret;
+    }
+    xatest_dev.clk = clk;
+
+    dev_info(&pdev->dev, "fclk0 set to %ld Hz", clk_get_rate(clk));
+
     ret = misc_register(&xatest_dev.miscdev);
     if(ret != 0) {
         dev_err(&pdev->dev, "failed to register misc device");
-        return ret;
+        goto out;
     }
 
     dev_info(&pdev->dev, "initialized");
 
     return 0;
+
+out:
+    clk_disable_unprepare(clk);
+
+    return ret;
 }
 
 static int xatest_remove(struct platform_device *pdev)
 {
     misc_deregister(&xatest_dev.miscdev);
+    clk_disable_unprepare(xatest_dev.clk);
     xatest_dev.dev = NULL;
     xatest_dev.miscdev.parent = NULL;
     dev_info(&pdev->dev, "cleanup done");

@@ -10,7 +10,6 @@ class ZedboardPlatform(Xilinx7SeriesPlatform):
     device = "xc7z020"
     package = "clg484"
     speed = 1
-    default_clk = "gclk"
 
     resources = [
         Resource("gclk", 0, Pins("Y9", dir="i"), Attrs(IOSTANDARD="LVCMOS33"), Clock(100e6)),

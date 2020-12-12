@@ -6,11 +6,21 @@ from ps7 import PS7
 class Top(Elaboratable):
     def elaborate(self, platform):
         m = Module()
-        clk = ClockSignal("sync")
 
         # PS7
         ps7 = PS7()
         m.submodules += ps7
+
+        # Default clock (provided by PS7)
+        m.domains.sync = ClockDomain("sync")
+        clk = ClockSignal("sync")
+        m.d.comb += clk.eq(ps7.fclk[0])
+
+        # Clock constraint
+        clk_ = Signal()
+        m.d.comb += clk_.eq(clk)
+
+        platform.add_clock_constraint(clk_, 100000000)
 
         # AXI
         axi_bus = ps7.m_axi_gp0

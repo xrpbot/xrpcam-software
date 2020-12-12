@@ -274,7 +274,7 @@ static struct xatest_device xatest_dev = {
     }
 };
 
-static int fpga_init(struct device *dev)
+static int __init fpga_init(struct device *dev)
 {
     struct device_node *dt_fpga_region, *dt_fpga_mgr;
     struct fpga_manager *fpga_mgr;
@@ -329,7 +329,7 @@ out:
     return ret;
 }
 
-static int xatest_probe(struct platform_device *pdev)
+static int __init xatest_probe(struct platform_device *pdev)
 {
     int ret;
     struct resource *res;
@@ -384,10 +384,9 @@ static struct platform_driver xrp_axi_test_driver = {
         .name = "xrp_axi_test",
         .of_match_table = xrp_axi_test_dt_ids
     },
-    .probe = xatest_probe,
     .remove = xatest_remove
 };
-module_platform_driver(xrp_axi_test_driver);
+module_platform_driver_probe(xrp_axi_test_driver, xatest_probe);
 
 MODULE_AUTHOR("Norbert Braun <norbert@xrpbot.org>");
 MODULE_DESCRIPTION("AXI test for Zynq");

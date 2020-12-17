@@ -145,7 +145,6 @@ def axi_write(axi_bus, transact, delay=0, assert_on_error=False):
     d_delay = get_delay(delay, 'd')
     b_delay = get_delay(delay, 'b')
 
-    cnt = 0
     b_done = 0
     while b_done < len(transact):
         if a_delay == 0 and addr_i < len(addr):

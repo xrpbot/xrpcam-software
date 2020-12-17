@@ -18,10 +18,13 @@ class AXITestSlave(Elaboratable):
 
         with m.FSM(reset="RESET"):
             with m.State("RESET"):
-                m.next = "WAIT_ADDR"
+                with m.If(self.bus.areset_n == 1):
+                    m.next = "WAIT_ADDR"
 
             with m.State("WAIT_ADDR"):
-                with m.If(self.bus.awvalid == 1):
+                with m.If(self.bus.areset_n == 0):
+                    m.next = "RESET"
+                with m.Elif(self.bus.awvalid == 1):
                     m.d.sync += awaddr.eq(self.bus.awaddr)
                     m.d.sync += awsize.eq(self.bus.awsize)
 
@@ -42,7 +45,10 @@ class AXITestSlave(Elaboratable):
             with m.State("WAIT_DATA"):
                 m.d.sync += self.bus.awready.eq(0)
 
-                with m.If(self.bus.wvalid == 1):
+                with m.If(self.bus.areset_n == 0):
+                    m.d.sync += self.bus.wready.eq(0)
+                    m.next = "RESET"
+                with m.Elif(self.bus.wvalid == 1):
                     with m.If((awaddr >= self.base_addr) & ((awaddr - self.base_addr) < 4*self.n_regs)):
                         reg_addr = (awaddr - self.base_addr) >> 2
                         for i in range(0, 4):
@@ -59,7 +65,10 @@ class AXITestSlave(Elaboratable):
                         m.next = "WAIT_RESP_READY"
 
             with m.State("WAIT_RESP_READY"):
-                with m.If(self.bus.bready == 1):
+                with m.If(self.bus.areset_n == 0):
+                    m.d.sync += self.bus.bvalid.eq(0)
+                    m.next = "RESET"
+                with m.Elif(self.bus.bready == 1):
                     m.d.sync += self.bus.bvalid.eq(0)
                     m.next = "WAIT_ADDR"
 
@@ -72,11 +81,15 @@ class AXITestSlave(Elaboratable):
 
         with m.FSM(reset="RESET"):
             with m.State("RESET"):
-                m.d.sync += self.bus.arready.eq(1)
-                m.next = "WAIT_VALID"
+                with m.If(self.bus.areset_n == 1):
+                    m.d.sync += self.bus.arready.eq(1)
+                    m.next = "WAIT_VALID"
 
             with m.State("WAIT_VALID"):
-                with m.If(self.bus.arvalid == 1):
+                with m.If(self.bus.areset_n == 0):
+                    m.d.sync += self.bus.arready.eq(0)
+                    m.next = "RESET"
+                with m.Elif(self.bus.arvalid == 1):
                     m.d.sync += arid.eq(self.bus.arid)
                     m.d.sync += araddr.eq(self.bus.araddr)
                     m.d.sync += arlen.eq(self.bus.arlen)
@@ -95,7 +108,10 @@ class AXITestSlave(Elaboratable):
                     m.next = "SEND_DATA"
 
             with m.State("SEND_DATA"):
-                with m.If(self.bus.rready == 1):
+                with m.If(self.bus.areset_n == 0):
+                    m.d.sync += self.bus.rvalid.eq(0)
+                    m.next = "RESET"
+                with m.Elif(self.bus.rready == 1):
                     with m.If(arlen == 0):
                         m.d.sync += self.bus.rvalid.eq(0)
                         m.d.sync += self.bus.arready.eq(1)

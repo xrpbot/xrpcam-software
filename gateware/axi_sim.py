@@ -76,13 +76,20 @@ class TWrite:
         self.awburst = awburst
         self.exp_resp = exp_resp
 
-def axi_write(axi_bus, transact, delay=0, assert_on_error=False):
+def axi_write(axi_bus, transact, delay=0, assert_on_error=False, timeout=None):
     """Simulated AXI master performing one or more write transactions.
 
     axi_bus -- AXI bus (nMigen Record)
     transact -- list of write transactions (TWrite)
     delay -- Delay (in ticks). See below.
     assert_on_error -- assert if incorrent behavior from the slave is detected.
+    timeout -- if not None, abort after this number of cycles.
+
+    Note that aborting due to timeout will possibly leave the slave in an
+    ongoing transaction. It is then required to perform an AXI reset.
+    Otherwise, further AXI transactions afterwards should not be expected to
+    work. The function does not report an abort due to timeout, as the
+    parameter is currently used only in the AXI reset tests.
 
     The three AXI channels involved in a write transaction (write address,
     write data, write response) are independent, each with its own flow
@@ -145,6 +152,7 @@ def axi_write(axi_bus, transact, delay=0, assert_on_error=False):
     d_delay = get_delay(delay, 'd')
     b_delay = get_delay(delay, 'b')
 
+    cnt = 0
     b_done = 0
     while b_done < len(transact):
         if a_delay == 0 and addr_i < len(addr):
@@ -175,6 +183,10 @@ def axi_write(axi_bus, transact, delay=0, assert_on_error=False):
             b_delay -= 1
 
         yield Tick()
+        cnt += 1
+
+        if timeout != None and cnt >= timeout:
+            break
 
         if (yield axi_bus.awvalid == 1) and (yield axi_bus.awready == 1):
             yield axi_bus.awvalid.eq(0)
@@ -264,13 +276,20 @@ class TRead:
         self.exp_resp = exp_resp
         self.exp_data = exp_data
 
-def axi_read(axi_bus, transact, delay=0, assert_on_error=False):
+def axi_read(axi_bus, transact, delay=0, assert_on_error=False, timeout=None):
     """Simulated AXI master performing one or more read transactions.
 
     axi_bus -- AXI bus (nMigen Record)
     transact -- list of read transactions (TRead)
     delay -- Delay (in ticks). See below.
     assert_on_error -- assert if incorrent behavior from the slave is detected.
+    timeout -- if not None, abort after this number of cycles.
+
+    Note that aborting due to timeout will possibly leave the slave in an
+    ongoing transaction. It is then required to perform an AXI reset.
+    Otherwise, further AXI transactions afterwards should not be expected to
+    work. The function does not report an abort due to timeout, as the
+    parameter is currently used only in the AXI reset tests.
 
     The two AXI channels involved in a read transaction (read address, read
     data) are independent, each with its own flow control. No ordering is
@@ -316,6 +335,7 @@ def axi_read(axi_bus, transact, delay=0, assert_on_error=False):
 
         addr_i += 1
 
+    cnt = 0
     addr_i = 0
     r_done = 0
 
@@ -341,6 +361,9 @@ def axi_read(axi_bus, transact, delay=0, assert_on_error=False):
             r_delay -= 1
 
         yield Tick()
+        cnt += 1
+        if timeout != None and cnt >= timeout:
+            break
 
         if (yield axi_bus.arvalid == 1) and (yield axi_bus.arready == 1):
             yield axi_bus.arvalid.eq(0)

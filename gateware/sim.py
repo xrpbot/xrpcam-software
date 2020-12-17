@@ -8,6 +8,51 @@ from axi_sim import *
 from axi_test_slave import AXITestSlave
 
 def test_process():
+    yield axi_bus.areset_n.eq(1)
+
+    # test reset during write transaction
+    for i in range(0, 10):
+        axi_write_transact = [
+            TWrite(0x40000000, [0x11, 0x22, 0x33, 0x44], exp_resp=AXI3Response.OKAY)
+        ]
+
+        yield from axi_write(axi_bus, axi_write_transact, delay='rand', timeout=random.randrange(40))
+
+        yield axi_bus.areset_n.eq(0)
+        yield axi_bus.awvalid.eq(0)
+        yield axi_bus.wvalid.eq(0)
+        yield axi_bus.bready.eq(0)
+
+        yield Tick()
+        yield Settle()
+
+        assert((yield axi_bus.awready) == 0)
+        assert((yield axi_bus.wready) == 0)
+        assert((yield axi_bus.bvalid) == 0)
+
+        yield axi_bus.areset_n.eq(1)
+
+    # test reset during read transaction
+    for i in range(0, 10):
+        axi_read_transact = [
+            TRead(0x40000000, burst_len=4, exp_resp=AXI3Response.OKAY)
+        ]
+
+        yield from axi_read(axi_bus, axi_read_transact, delay='rand', timeout=random.randrange(40))
+
+        yield axi_bus.areset_n.eq(0)
+        yield axi_bus.arvalid.eq(0)
+        yield axi_bus.rready.eq(0)
+
+        yield Tick()
+        yield Settle()
+
+        assert((yield axi_bus.arready) == 0)
+        assert((yield axi_bus.rvalid) == 0)
+
+        yield axi_bus.areset_n.eq(1)
+
+    # test write and read transactions
     for i in range(0, 10):
         axi_write_transact = [
             TWrite(0x40000000, [0x00, 0x00, 0x00, 0x00], bytes_per_beat=1, exp_resp=AXI3Response.OKAY),

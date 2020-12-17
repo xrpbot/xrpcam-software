@@ -21,7 +21,7 @@ class AXITestSlave(Elaboratable):
                 m.next = "WAIT_ADDR"
 
             with m.State("WAIT_ADDR"):
-                with m.If((self.bus.awvalid == 1)):
+                with m.If(self.bus.awvalid == 1):
                     m.d.sync += awaddr.eq(self.bus.awaddr)
                     m.d.sync += awsize.eq(self.bus.awsize)
 

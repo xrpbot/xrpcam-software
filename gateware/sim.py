@@ -5,7 +5,7 @@ from nmigen import *
 from nmigen.sim import *
 from axi import *
 from axi_sim import *
-from axi_test_slave import AXITestSlave
+from axi_reg_bank import AXIRegBank, Register_RW
 
 def test_process():
     yield axi_bus.areset_n.eq(1)
@@ -69,10 +69,10 @@ def test_process():
         else:
             yield from axi_write(axi_bus, axi_write_transact, delay='rand')
 
-        assert((yield axi_slave.regs[0]) == 0x33221100)
-        assert((yield axi_slave.regs[1]) == 0x90094455)
-        assert((yield axi_slave.regs[2]) == 0xb00ba00a)
-        assert((yield axi_slave.regs[3]) == 0xeeddc00c)
+        assert((yield regs[0]._data) == 0x33221100)
+        assert((yield regs[1]._data) == 0x90094455)
+        assert((yield regs[2]._data) == 0xb00ba00a)
+        assert((yield regs[3]._data) == 0xeeddc00c)
 
         v = [ random.randrange(2**32) for _ in range(0, 4) ]
         axi_write_transact = [
@@ -91,7 +91,7 @@ def test_process():
             yield from axi_write(axi_bus, axi_write_transact, delay='rand')
 
         for j in range(0, 4):
-            assert((yield axi_slave.regs[j]) == v[j])
+            assert((yield regs[j]._data) == v[j])
 
         axi_read_transact = [
             TRead(0x40000000, exp_resp=AXI3Response.OKAY, exp_data=v[0]),
@@ -106,7 +106,7 @@ def test_process():
         yield from axi_read(axi_bus, axi_read_transact, delay='rand')
 
         for j in range(0, 4):
-            assert((yield axi_slave.regs[j]) == v[j])
+            assert((yield regs[j]._data) == v[j])
 
 if len(sys.argv) > 1:
     seed = int(sys.argv[1])
@@ -121,7 +121,13 @@ m = Module()
 
 axi_bus = AXI3Bus()
 
-axi_slave = AXITestSlave(axi_bus, 4, 0x40000000)
+regs = []
+for i in range(0, 4):
+    reg = Register_RW()
+    regs.append(reg)
+    m.submodules += reg
+
+axi_slave = AXIRegBank(axi_bus, regs, 0x40000000)
 m.submodules += axi_slave
 
 sim = Simulator(m)

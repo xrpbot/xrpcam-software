@@ -1,11 +1,44 @@
 from nmigen import *
 from axi import AXI3Response, AXI3Burst
 
-class AXITestSlave(Elaboratable):
-    def __init__(self, axi_bus, n_regs, base_addr):
+class Register_RO(Elaboratable):
+    def __init__(self, value):
+        self.value = value
+
+        self.data_in = Signal(32)
+        self.wstrb_in = Signal(4)
+        self.data_out = Signal(32)
+
+    def elaborate(self, platform):
+        m = Module()
+
+        m.d.comb += self.data_out.eq(self.value)
+
+        return m
+
+class Register_RW(Elaboratable):
+    def __init__(self):
+        self.data_in = Signal(32)
+        self.wstrb_in = Signal(4)
+        self.data_out = Signal(32)
+
+        self._data = Signal(32)
+
+    def elaborate(self, platform):
+        m = Module()
+
+        for i in range(0, 4):
+            with m.If(self.wstrb_in[i] == 1):
+                m.d.sync += self._data[8*i:8*(i+1)].eq(self.data_in[8*i:8*(i+1)])
+
+        m.d.comb += self.data_out.eq(self._data)
+
+        return m
+
+class AXIRegBank(Elaboratable):
+    def __init__(self, axi_bus, regs, base_addr):
         self.bus = axi_bus
-        self.n_regs = n_regs
-        self.regs = Array([ Signal(32) for i in range(0, self.n_regs) ])
+        self.regs = Array(regs)
         self.base_addr = base_addr
 
     def elaborate(self, platform):
@@ -15,6 +48,11 @@ class AXITestSlave(Elaboratable):
         awaddr = Signal(self.bus.awaddr.shape())
         awsize = Signal(self.bus.awsize.shape())
         w_wrap_mask = Signal(self.bus.awaddr.shape())
+
+        for i in range(0, len(self.regs)):
+            for j in range(0, 4):
+                m.d.comb += self.regs[i].data_in.eq(self.bus.wdata)
+                m.d.comb += self.regs[i].wstrb_in[j].eq(0)
 
         with m.FSM(reset="RESET"):
             with m.State("RESET"):
@@ -49,11 +87,9 @@ class AXITestSlave(Elaboratable):
                     m.d.sync += self.bus.wready.eq(0)
                     m.next = "RESET"
                 with m.Elif(self.bus.wvalid == 1):
-                    with m.If((awaddr >= self.base_addr) & ((awaddr - self.base_addr) < 4*self.n_regs)):
+                    with m.If((awaddr >= self.base_addr) & ((awaddr - self.base_addr) < 4*len(self.regs))):
                         reg_addr = (awaddr - self.base_addr) >> 2
-                        for i in range(0, 4):
-                            with m.If(self.bus.wstrb[i] == 1):
-                                m.d.sync += self.regs[reg_addr][8*i:8*(i+1)].eq(self.bus.wdata[8*i:8*(i+1)])
+                        m.d.comb += self.regs[reg_addr].wstrb_in.eq(self.bus.wstrb)
                     with m.Else():
                         m.d.sync += self.bus.bresp.eq(AXI3Response.DECERR)
 
@@ -121,8 +157,8 @@ class AXITestSlave(Elaboratable):
                         m.d.sync += arlen.eq(arlen-1)
                         m.next = "SEND_DATA"
 
-        with m.If((araddr >= self.base_addr) & ((araddr - self.base_addr) < 4*self.n_regs)):
-            m.d.comb += self.bus.rdata.eq(self.regs[(araddr - self.base_addr) >> 2])
+        with m.If((araddr >= self.base_addr) & ((araddr - self.base_addr) < 4*len(self.regs))):
+            m.d.comb += self.bus.rdata.eq(self.regs[(araddr - self.base_addr) >> 2].data_out)
             m.d.comb += self.bus.rresp.eq(AXI3Response.OKAY)
         with m.Else():
             m.d.comb += self.bus.rdata.eq(0xDEADBEEF)

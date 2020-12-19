@@ -1,6 +1,6 @@
 from nmigen import *
 import axi
-from axi_test_slave import AXITestSlave
+from axi_reg_bank import AXIRegBank, Register_RO, Register_RW
 from ps7 import PS7
 
 class Top(Elaboratable):
@@ -26,7 +26,18 @@ class Top(Elaboratable):
         axi_bus = ps7.m_axi_gp0
         m.d.comb += axi_bus.aclk.eq(clk)
 
-        axi_slave = AXITestSlave(axi_bus, 8, 0x40000000)
+        regs = []
+        for i in range(0, 7):
+            reg = Register_RW()
+            regs.append(reg)
+            m.submodules += reg
+
+        # Register #7 is read-only, writes will be silently ignored
+        reg = Register_RO(0xF000BAAA)
+        regs.append(reg)
+        m.submodules += reg
+
+        axi_slave = AXIRegBank(axi_bus, regs, 0x40000000)
         m.submodules += axi_slave
 
         led = [ platform.request("led", i) for i in range(0, 8) ]
@@ -59,16 +70,16 @@ class Top(Elaboratable):
         m.d.comb += ps7.emiogpio_i[24:32].eq(cnt_ar)
         m.d.comb += ps7.emiogpio_i[32:40].eq(cnt_r)
 
-        m.d.comb += ps7.emiogpio_i[40:48].eq(axi_slave.regs[0][0:8])
+        m.d.comb += ps7.emiogpio_i[40:48].eq(regs[0].data_out[0:8])
 
         timer_sync = Signal(28)
         m.d.sync += timer_sync.eq(timer_sync+1)
 
         m.d.comb += led[0].o.eq(timer_sync[-1])
 
-        m.d.comb += led[4].o.eq(axi_slave.regs[0][0])
-        m.d.comb += led[5].o.eq(axi_slave.regs[0][1])
-        m.d.comb += led[6].o.eq(axi_slave.regs[0][2])
-        m.d.comb += led[7].o.eq(axi_slave.regs[0][3])
+        m.d.comb += led[4].o.eq(regs[0].data_out[0])
+        m.d.comb += led[5].o.eq(regs[0].data_out[1])
+        m.d.comb += led[6].o.eq(regs[0].data_out[2])
+        m.d.comb += led[7].o.eq(regs[0].data_out[3])
 
         return m

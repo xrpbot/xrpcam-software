@@ -82,7 +82,7 @@ def axi_write(axi_bus, transact, delay=0, assert_on_error=False, timeout=None):
     axi_bus -- AXI bus (nMigen Record)
     transact -- list of write transactions (TWrite)
     delay -- Delay (in ticks). See below.
-    assert_on_error -- assert if incorrent behavior from the slave is detected.
+    assert_on_error -- assert if incorrect behavior from the slave is detected.
     timeout -- if not None, abort after this number of cycles.
 
     Note that aborting due to timeout will possibly leave the slave in an
@@ -282,7 +282,7 @@ def axi_read(axi_bus, transact, delay=0, assert_on_error=False, timeout=None):
     axi_bus -- AXI bus (nMigen Record)
     transact -- list of read transactions (TRead)
     delay -- Delay (in ticks). See below.
-    assert_on_error -- assert if incorrent behavior from the slave is detected.
+    assert_on_error -- assert if incorrect behavior from the slave is detected.
     timeout -- if not None, abort after this number of cycles.
 
     Note that aborting due to timeout will possibly leave the slave in an

@@ -1,8 +1,12 @@
 #!/usr/bin/python3
 import random
 import sys
+import os.path
 from nmigen import *
 from nmigen.sim import *
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from axi import *
 from axi_sim import *
 from axi_reg_bank import AXIRegBank, Register_RW

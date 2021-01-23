@@ -103,7 +103,9 @@ This assumes you have nMigen and the vendor toolchain (Xilinx Vivado) installed.
 
 To run a simple simulation-based test suite:
 
-    ./sim.py
+    cd tests
+    ./test_axi.py
+    cd ..
 
 To synthesize a bitstream:
 

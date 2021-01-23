@@ -71,4 +71,3 @@ class PS7(Elaboratable):
             o_MAXIGP0BREADY  = self.m_axi_gp0.bready)
 
         return m
-

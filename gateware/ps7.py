@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 from nmigen import *
 import axi
 

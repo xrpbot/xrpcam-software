@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 from nmigen.build import *
 from nmigen.vendor.xilinx_7series import *
 from nmigen_boards.resources.user import *

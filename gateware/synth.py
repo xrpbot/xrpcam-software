@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 from nmigen import *
-from zedboard import ZedboardPlatform
+from zedboard import ZedBoardPlatform
 from top import Top
 
-platform = ZedboardPlatform()
+platform = ZedBoardPlatform()
 platform.build(Top())

@@ -54,11 +54,15 @@ our gateware.
 AXI test
 --------
 
-The AXI test gateware provides 8 memory-mapped 32 bit registers that can be
-read and written. The kernel driver accesses them by various methods
+The AXI test gateware provides 8 memory-mapped 32 bit registers. The first 7 of
+them can be read and written. The last register is read-only, writes are
+silently ignored. The 4 least-significant bits of the first register are output
+to ZedBoard LEDs.
+
+The kernel driver accesses the registers by various methods
 (`ioread32`/`iowrite32`, `memcpy_fromio`/`memcpy_toio`, `memset_io`). A simple
-userspace program communicates with the kernel driver and allows to read/write
-registers (via the various methods) from the command line.
+userspace program, `axi_test`, communicates with the kernel driver and allows
+to read/write registers (via the various methods) from the command line.
 
 AXI is a burst-based protocol, meaning that every transaction may have multiple
 data transfers (called "beats"). In practice, `memcpy_*` and `memset_io` seem
@@ -70,8 +74,8 @@ data transfer, but this is not provided directly by the Zynq hardware. Thus, a
 (soft) AXI-to-AXI-Lite bridge would have to be implemented in the PL to use it.
 
 The gateware provides some debug counters (number of transactions on the five
-AXI channels) that can be read through GPIOs between PS and PL. A userspace
-program is provided to read them.
+AXI channels) that can be read through GPIOs between PS and PL. The userspace
+program `axi_stat` is provided to read them.
 
 In addition, there are some further tests:
 

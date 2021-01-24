@@ -1,4 +1,4 @@
-Copyright (C) 2020 Norbert Braun <norbert@xrpbot.org>
+Copyright (C) 2020-2021 Norbert Braun <norbert@xrpbot.org>
 
 The kernel driver is licensed under the GNU GPL (see individual files for
 details).

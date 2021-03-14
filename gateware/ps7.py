@@ -5,6 +5,7 @@ class PS7(Elaboratable):
     def __init__(self):
         self.fclk = Signal(4)
         self.m_axi_gp0 = axi.AXI3Bus()
+        self.irqf2p = Signal(16)
         self.emiogpio_i = Signal(64)
         self.emiogpio_o = Signal(64)
         self.emiogpio_tn = Signal(64)
@@ -21,6 +22,9 @@ class PS7(Elaboratable):
             i_EMIOGPIOI=self.emiogpio_i,
             o_EMIOGPIOO=self.emiogpio_o,
             o_EMIOGPIOTN=self.emiogpio_tn,
+
+            # IRQF2P
+            i_IRQF2P = self.irqf2p,
 
             # M_AXI_GP0
             i_MAXIGP0ACLK    = self.m_axi_gp0.aclk,

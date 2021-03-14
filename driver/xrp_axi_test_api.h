@@ -2,7 +2,7 @@
 /*
  * Kernel driver to test AXI on Xilinx Zynq: userspace API
  *
- * Copyright (C) 2020 Norbert Braun <norbert@xrpbot.org>
+ * Copyright (C) 2020-2021 Norbert Braun <norbert@xrpbot.org>
  */
 #ifndef XRP_AXI_TEST_API_H
 #define XRP_AXI_TEST_API_H
@@ -34,6 +34,16 @@ struct xatest_test_result {
     __u32 result;
 };
 
+struct xatest_sr_read_arg {
+    __u32 sr;
+    __u32 val;
+};
+
+#define XASR_SW_STATE   1
+#define XASR_TIMER      2
+#define XASR_INT_STATUS 3
+#define XASR_INT_COUNT  4
+
 #define XAIOC_READ           _IOWR('t', 0, struct xatest_read_arg)
 #define XAIOC_WRITE          _IOW('t', 1, struct xatest_write_arg)
 #define XAIOC_READ_ALL       _IOWR('t', 2, struct xatest_read_all_arg)
@@ -43,5 +53,11 @@ struct xatest_test_result {
 #define XAIOC_TEST_UNALIGNED _IOR('t', 6, struct xatest_test_result)
 #define XAIOC_TEST_ILL_READ  _IO('t', 7)
 #define XAIOC_TEST_ILL_WRITE _IO('t', 8)
+#define XAIOC_SR_READ        _IOWR('t', 9, struct xatest_sr_read_arg)
+
+struct xatest_event {
+    __u32 swdata;
+    __u32 timestamp;
+};
 
 #endif

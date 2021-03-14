@@ -2,19 +2,36 @@
 /*
  * Kernel driver to test AXI on Xilinx Zynq
  *
- * Copyright (C) 2020 Norbert Braun <norbert@xrpbot.org>
+ * Copyright (C) 2020-2021 Norbert Braun <norbert@xrpbot.org>
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/device.h>
+#include <linux/circ_buf.h>
 #include <linux/fs.h>
+#include <linux/poll.h>
 #include <linux/miscdevice.h>
 #include <linux/of.h>
 #include <linux/clk.h>
+#include <linux/interrupt.h>
 #include <linux/fpga/fpga-mgr.h>
 #include <asm/io.h>
 
 #include "xrp_axi_test_api.h"
+
+#define XRP_SW_STATE_REG   0x20
+
+#define XRP_TIMER_REG      0x24
+
+#define XRP_INT_ENABLE_REG 0x28
+#define XRP_INT_ENABLE_REG__INT_ENABLE   0x1
+
+#define XRP_INT_STATUS_REG 0x2C
+#define XRP_INT_STATUS_REG__INT_OVERFLOW 0x0100
+#define XRP_INT_STATUS_REG__INT_PENDING  0x0001
+
+#define XRP_INT_COUNT_REG  0x30
 
 struct xatest_device {
     struct miscdevice miscdev;
@@ -23,7 +40,7 @@ struct xatest_device {
     struct clk *clk;
 };
 
-static u32 xatest_read(struct xatest_device *xadev, u32 reg)
+static u32 xatest_reg_read(struct xatest_device *xadev, u32 reg)
 {
     if(reg < XATEST_N_REGS) {
         return ioread32((u32 __iomem *) xadev->regs + reg);
@@ -33,7 +50,7 @@ static u32 xatest_read(struct xatest_device *xadev, u32 reg)
     }
 }
 
-static void xatest_write(struct xatest_device *xadev, u32 reg, u32 val)
+static void xatest_reg_write(struct xatest_device *xadev, u32 reg, u32 val)
 {
     if(reg < XATEST_N_REGS) {
         iowrite32(val, (u32 __iomem *) xadev->regs + reg);
@@ -42,17 +59,17 @@ static void xatest_write(struct xatest_device *xadev, u32 reg, u32 val)
     }
 }
 
-static void xatest_read_all(struct xatest_device *xadev, u32* vals)
+static void xatest_reg_read_all(struct xatest_device *xadev, u32* vals)
 {
     memcpy_fromio(vals, xadev->regs, XATEST_N_REGS*4);
 }
 
-static void xatest_write_all(struct xatest_device *xadev, const u32* vals)
+static void xatest_reg_write_all(struct xatest_device *xadev, const u32* vals)
 {
     memcpy_toio(xadev->regs, vals, XATEST_N_REGS*4);
 }
 
-static void xatest_clear_all(struct xatest_device *xadev)
+static void xatest_reg_clear_all(struct xatest_device *xadev)
 {
     memset_io(xadev->regs, 0, XATEST_N_REGS*4);
 }
@@ -168,17 +185,91 @@ static int xatest_test_unaligned(struct xatest_device *xadev)
 }
 
 /* Perform illegal read */
-static void xatest_ill_read(struct xatest_device *xadev)
+static void xatest_ill_reg_read(struct xatest_device *xadev)
 {
     dev_warn(xadev->dev, "about to perform illegal read");
     ioread32((u8 __iomem *) xadev->regs + 0x100);
 }
 
 /* Perform illegal write */
-static void xatest_ill_write(struct xatest_device *xadev)
+static void xatest_ill_reg_write(struct xatest_device *xadev)
 {
     dev_warn(xadev->dev, "about to perform illegal write");
     iowrite32(0, (u8 __iomem *) xadev->regs + 0x100);
+}
+
+/* Inspect hardware registers from userspace (intended for debugging only) */
+static int xatest_sr_read(struct xatest_device *xadev, u32 reg, u32 *val)
+{
+    switch(reg) {
+        case XASR_SW_STATE:
+            *val = ioread32(xadev->regs + XRP_SW_STATE_REG);
+            return 0;
+        case XASR_TIMER:
+            *val = ioread32(xadev->regs + XRP_TIMER_REG);
+            return 0;
+        case XASR_INT_STATUS:
+            *val = ioread32(xadev->regs + XRP_INT_STATUS_REG);
+            return 0;
+        case XASR_INT_COUNT:
+            *val = ioread32(xadev->regs + XRP_INT_COUNT_REG);
+            return 0;
+        default:
+            dev_warn(xadev->dev, "attempted to read unknown special register");
+            return -EINVAL;
+    }
+}
+
+static void xatest_enable_interrupt(struct xatest_device *xadev)
+{
+    iowrite32(XRP_INT_ENABLE_REG__INT_ENABLE, xadev->regs + XRP_INT_ENABLE_REG);
+}
+
+static void xatest_disable_interrupt(struct xatest_device *xadev)
+{
+    iowrite32(0, xadev->regs + XRP_INT_ENABLE_REG);
+}
+
+static DECLARE_WAIT_QUEUE_HEAD(int_event_queue);
+static DEFINE_SPINLOCK(irq_lock);
+
+#define XATEST_CIRC_BUF_SIZE 16
+
+struct xatest_circ_buf {
+    struct xatest_event data[XATEST_CIRC_BUF_SIZE];
+    int head;
+    int tail;
+};
+
+static struct xatest_circ_buf event_buf = {
+    .head = 0,
+    .tail = 0
+};
+
+static irqreturn_t xatest_isr(int irq, void *dev_id)
+{
+    struct xatest_device *xadev = (struct xatest_device *) dev_id;
+    u32 swdata, timestamp;
+    int tail;
+
+    spin_lock(&irq_lock);
+    /* acknowledge interrupt to hardware */
+    iowrite32(XRP_INT_STATUS_REG__INT_PENDING, xadev->regs + XRP_INT_STATUS_REG);
+
+    swdata = ioread32(xadev->regs + XRP_SW_STATE_REG);
+    timestamp = ioread32(xadev->regs + XRP_TIMER_REG);
+
+    tail = READ_ONCE(event_buf.tail);
+    if(CIRC_SPACE(event_buf.head, tail, XATEST_CIRC_BUF_SIZE) >= 1) {
+        event_buf.data[event_buf.head].swdata = swdata;
+        event_buf.data[event_buf.head].timestamp = timestamp;
+        smp_store_release(&event_buf.head, (event_buf.head+1)&(XATEST_CIRC_BUF_SIZE-1));
+        wake_up_interruptible(&int_event_queue);
+    } else {
+        /* buffer overrun, data lost */
+    }
+    spin_unlock(&irq_lock);
+    return IRQ_HANDLED;
 }
 
 static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -188,7 +279,9 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     struct xatest_read_all_arg xa_read_all_arg;
     struct xatest_write_all_arg xa_write_all_arg;
     struct xatest_test_result xa_test_result;
+    struct xatest_sr_read_arg xa_sr_read_arg;
     u32 val;
+    int ret;
 
     struct xatest_device *xadev = container_of(file->private_data, struct xatest_device, miscdev);
 
@@ -200,7 +293,7 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             if(copy_from_user(&xa_read_arg, (void __user *)arg, sizeof(struct xatest_read_arg)) != 0)
                 return -EFAULT;
             dev_dbg(xadev->dev, "read: reg=%d", xa_read_arg.reg);
-            val = xatest_read(xadev, xa_read_arg.reg);
+            val = xatest_reg_read(xadev, xa_read_arg.reg);
             dev_dbg(xadev->dev, "read: val=0x%x", val);
             xa_read_arg.val = val;
             if(copy_to_user((void __user*) arg, &xa_read_arg, sizeof(struct xatest_read_arg)) != 0)
@@ -211,14 +304,14 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             if(copy_from_user(&xa_write_arg, (void __user *)arg, sizeof(struct xatest_write_arg)) != 0)
                 return -EFAULT;
             dev_dbg(xadev->dev, "write: reg=%d, val=0x%x", xa_write_arg.reg, xa_write_arg.val);
-            xatest_write(xadev, xa_write_arg.reg, xa_write_arg.val);
+            xatest_reg_write(xadev, xa_write_arg.reg, xa_write_arg.val);
             return 0;
 
         case XAIOC_READ_ALL:
             if(copy_from_user(&xa_read_all_arg, (void __user *)arg, sizeof(struct xatest_read_all_arg)) != 0)
                 return -EFAULT;
             dev_dbg(xadev->dev, "read_all");
-            xatest_read_all(xadev, xa_read_all_arg.vals);
+            xatest_reg_read_all(xadev, xa_read_all_arg.vals);
             if(copy_to_user((void __user*) arg, &xa_read_all_arg, sizeof(struct xatest_read_all_arg)) != 0)
                 return -EFAULT;
             return 0;
@@ -227,12 +320,12 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             if(copy_from_user(&xa_write_all_arg, (void __user *)arg, sizeof(struct xatest_write_all_arg)) != 0)
                 return -EFAULT;
             dev_dbg(xadev->dev, "write_all");
-            xatest_write_all(xadev, xa_write_all_arg.vals);
+            xatest_reg_write_all(xadev, xa_write_all_arg.vals);
             return 0;
 
         case XAIOC_CLEAR_ALL:
             dev_dbg(xadev->dev, "clear_all");
-            xatest_clear_all(xadev);
+            xatest_reg_clear_all(xadev);
             return 0;
 
         case XAIOC_TEST_SMALL:
@@ -250,11 +343,24 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             return 0;
 
         case XAIOC_TEST_ILL_READ:
-            xatest_ill_read(xadev);
+            xatest_ill_reg_read(xadev);
             return 0;
 
         case XAIOC_TEST_ILL_WRITE:
-            xatest_ill_write(xadev);
+            xatest_ill_reg_write(xadev);
+            return 0;
+
+        case XAIOC_SR_READ:
+            if(copy_from_user(&xa_sr_read_arg, (void __user *)arg, sizeof(struct xatest_sr_read_arg)) != 0)
+                return -EFAULT;
+            dev_dbg(xadev->dev, "read special: reg=%d", xa_sr_read_arg.sr);
+            ret = xatest_sr_read(xadev, xa_sr_read_arg.sr, &val);
+            if(ret != 0)
+                return ret;
+            dev_dbg(xadev->dev, "read special: val=0x%x", val);
+            xa_sr_read_arg.val = val;
+            if(copy_to_user((void __user*) arg, &xa_sr_read_arg, sizeof(struct xatest_sr_read_arg)) != 0)
+                return -EFAULT;
             return 0;
 
         default:
@@ -262,10 +368,94 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     }
 }
 
+static DEFINE_SPINLOCK(reader_lock);
+
+static ssize_t xatest_read(struct file *file, char __user *buf, size_t count, loff_t *off)
+{
+    DEFINE_WAIT(wait);
+    size_t requested, read = 0;
+    struct xatest_event data[4];
+    int head, tail, avail;
+    int nonblock = READ_ONCE(file->f_flags) & O_NONBLOCK;
+
+    if(count == 0)
+        return count;
+
+    if(count < sizeof(struct xatest_event))
+        return -EINVAL;
+
+    requested = count / sizeof(struct xatest_event);
+    if(requested > ARRAY_SIZE(data))
+        requested = ARRAY_SIZE(data);
+
+    while(1) {
+        if(!nonblock)
+            prepare_to_wait(&int_event_queue, &wait, TASK_INTERRUPTIBLE);
+
+        spin_lock(&reader_lock);
+        head = smp_load_acquire(&event_buf.head);
+        tail = event_buf.tail;
+        avail = CIRC_CNT(head, tail, XATEST_CIRC_BUF_SIZE);
+        if(avail >= 1) {
+            while(read < avail && read < requested) {
+                    data[read] = event_buf.data[tail];
+                    read++;
+                    tail = (tail + 1) & (XATEST_CIRC_BUF_SIZE-1);
+            }
+            smp_store_release(&event_buf.tail, tail);
+        }
+        spin_unlock(&reader_lock);
+
+        if(nonblock)
+            break;
+
+        if(read == 0)
+            schedule();
+
+        finish_wait(&int_event_queue, &wait);
+
+        if(read > 0)
+            break;
+
+        if(signal_pending(current))
+            return -ERESTARTSYS;
+    }
+
+    if(read == 0) {
+        return -EAGAIN;
+    }
+
+    if(copy_to_user(buf, data, read*sizeof(struct xatest_event))) {
+        return -EFAULT;
+    }
+
+    return read*sizeof(struct xatest_event);
+}
+
+static unsigned int xatest_poll(struct file *file, struct poll_table_struct *poll_table)
+{
+    int head, avail;
+
+    poll_wait(file, &int_event_queue, poll_table);
+
+    spin_lock(&reader_lock);
+    head = smp_load_acquire(&event_buf.head);
+    avail = CIRC_CNT(head, event_buf.tail, XATEST_CIRC_BUF_SIZE);
+    spin_unlock(&reader_lock);
+
+    if(avail >= 1) {
+        return POLLIN | POLLRDNORM;
+    } else {
+        return 0;
+    }
+}
+
 static const struct file_operations xatest_fops = {
     .owner = THIS_MODULE,
     .unlocked_ioctl = xatest_ioctl,
-    .compat_ioctl = compat_ptr_ioctl
+    .compat_ioctl = compat_ptr_ioctl,
+    .read = xatest_read,
+    .poll = xatest_poll
 };
 
 static struct xatest_device xatest_dev = {
@@ -334,6 +524,7 @@ out:
 static int __init xatest_probe(struct platform_device *pdev)
 {
     int ret;
+    int irq;
     struct resource *res;
     struct clk *clk;
 
@@ -376,11 +567,25 @@ static int __init xatest_probe(struct platform_device *pdev)
 
     dev_info(&pdev->dev, "fclk0 set to %ld Hz", clk_get_rate(clk));
 
+    irq = platform_get_irq(pdev, 0);
+    if(irq <= 0) {
+        ret = -ENXIO;
+        goto out;
+    }
+
+    ret = devm_request_irq(&pdev->dev, irq, xatest_isr, 0, dev_name(&pdev->dev), &xatest_dev);
+    if(ret != 0) {
+        dev_err(&pdev->dev, "failed to register interrupt");
+        goto out;
+    }
+
     ret = misc_register(&xatest_dev.miscdev);
     if(ret != 0) {
         dev_err(&pdev->dev, "failed to register misc device");
         goto out;
     }
+
+    xatest_enable_interrupt(&xatest_dev);
 
     dev_info(&pdev->dev, "initialized");
 
@@ -394,6 +599,7 @@ out:
 
 static int xatest_remove(struct platform_device *pdev)
 {
+    xatest_disable_interrupt(&xatest_dev);
     misc_deregister(&xatest_dev.miscdev);
     clk_disable_unprepare(xatest_dev.clk);
     xatest_dev.dev = NULL;

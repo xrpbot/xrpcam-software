@@ -51,13 +51,20 @@ as the Microzed) do not do that any longer. We do not use that clock input in
 our gateware.
 
 
-AXI test
---------
+Tests
+-----
 
-The AXI test gateware provides 8 memory-mapped 32 bit registers. The first 7 of
-them can be read and written. The last register is read-only, writes are
-silently ignored. The 4 least-significant bits of the first register are output
-to ZedBoard LEDs.
+The tests try to exercise various aspects of the Zynq system to gain experience
+with them and to generate code that is (hopefully) re-usable for the XRPCam
+gateware/kernel driver.
+
+### AXI test
+
+The test gateware provides some memory-mapped 32 bit registers. The first 8
+registers have no special functionality and exist to test the register
+infrastructure itself. Registers 0 - 6 can be read and written. Register 7 is
+read-only with a hard-coded value, writes are silently ignored. The 4
+least-significant bits of register 0 are output to ZedBoard LEDs.
 
 The kernel driver accesses the registers by various methods
 (`ioread32`/`iowrite32`, `memcpy_fromio`/`memcpy_toio`, `memset_io`). A simple
@@ -95,6 +102,28 @@ outside the register space is attempted. However, this seems to be ignored
 (???).
 
 
+### Interrupt test
+
+There are 16 interrupt lines through which the PL can signal an interrupt
+request to the PS. To test this, the gateware contains logic that watches the
+state of the switches on the ZedBoard and causes an interrupt if the state
+changes. The kernel driver reacts to this by saving the current switch state
+and a timestamp from a counter in the gateware. Userspace can access this
+information by reading from the device file. The usual methods for this are
+supported: blocking reads, non-blocking reads, and monitoring the file
+descriptor through `select`. The userspace program `dev_read` can be used to
+test this.
+
+The interrupt test adds 5 more registers: the current switch state, a 32 bit
+counter driven by the gateware clock, and 3 interrupt control registers. To
+prevent userspace from interfering with the kernel, these registers are not
+writable through the AXI test userspace tool. However, some of them are
+readable as "special registers" to help with debugging, using `axi_test sr`.
+
+
+Building the tests
+------------------
+
 ### Simulating/building the gateware
 
 This assumes you have nMigen and the vendor toolchain (Xilinx Vivado) installed.
@@ -105,6 +134,7 @@ To run a simple simulation-based test suite:
 
     cd tests
     ./test_axi.py
+    ./test_interrupt.py
     cd ..
 
 To synthesize a bitstream:
@@ -140,7 +170,7 @@ tree `dts/zynq-zed-xrp.dtb` to the boot partition of the target system.
 
 As above, set `KDIR` to the actual location of the kernel source.
 
-Copy the files `axi_test` and `axi_stat` to the target system.
+Copy the files `axi_test`, `axi_stat`, and `dev_read` to the target system.
 
 
 Setting up the environment

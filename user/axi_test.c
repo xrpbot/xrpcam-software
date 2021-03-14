@@ -10,7 +10,7 @@
 
 #include <xrp_axi_test_api.h>
 
-enum op { OP_READ, OP_WRITE, OP_READ_ALL, OP_WRITE_ALL, OP_CLEAR_ALL, OP_TEST, OP_ILL_READ, OP_ILL_WRITE };
+enum op { OP_READ, OP_WRITE, OP_READ_ALL, OP_WRITE_ALL, OP_CLEAR_ALL, OP_SR_READ, OP_TEST, OP_ILL_READ, OP_ILL_WRITE };
 
 void help(const char *prog_name)
 {
@@ -20,6 +20,7 @@ void help(const char *prog_name)
     printf("    r [<reg>|all]     - read register\n");
     printf("    w <reg>|all <val> - write <val> to register <reg>, or all to registers\n");
     printf("    c                 - clear all registers\n");
+    printf("    sr                - read special registers\n");
     printf("    t                 - perform register test, report summary result\n");
     printf("    ir                - perform illegal read\n");
     printf("    iw                - perform illegal write\n");
@@ -63,6 +64,12 @@ int main(int argc, char *argv[])
             return -1;
         }
         op = OP_CLEAR_ALL;
+    } else if(strncmp(argv[1], "sr", 2) == 0) {
+        if(argc != 2) {
+            printf("Usage: %s sr\n", argv[0]);
+            return -1;
+        }
+        op = OP_SR_READ;
     } else if(strncmp(argv[1], "t", 1) == 0) {
         if(argc != 2) {
             printf("Usage: %s t\n", argv[0]);
@@ -190,6 +197,40 @@ int main(int argc, char *argv[])
             close(fd);
             return -2;
         }
+    } else if(op == OP_SR_READ) {
+        struct xatest_sr_read_arg ioc_arg;
+
+        ioc_arg.sr = XASR_SW_STATE;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("SW_STATE:   0x%08x\n", ioc_arg.val);
+
+        ioc_arg.sr = XASR_TIMER;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("TIMER:      %u\n", ioc_arg.val);
+
+        ioc_arg.sr = XASR_INT_STATUS;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("INT_STATUS: 0x%08x\n", ioc_arg.val);
+
+        ioc_arg.sr = XASR_INT_COUNT;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("INT_COUNT:  %u\n", ioc_arg.val);
     } else if(op == OP_TEST) {
         struct xatest_test_result ioc_arg;
         if(ioctl(fd, XAIOC_TEST_SMALL, &ioc_arg) < 0) {

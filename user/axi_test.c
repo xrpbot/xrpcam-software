@@ -12,12 +12,27 @@
 
 enum op { OP_READ, OP_WRITE, OP_READ_ALL, OP_WRITE_ALL, OP_CLEAR_ALL, OP_TEST, OP_ILL_READ, OP_ILL_WRITE };
 
+void help(const char *prog_name)
+{
+    printf("Usage: %s [ cmd ] [ args ]\n", prog_name);
+    printf("\n");
+    printf("Available commands:\n");
+    printf("    r [<reg>|all]     - read register\n");
+    printf("    w <reg>|all <val> - write <val> to register <reg>, or all to registers\n");
+    printf("    c                 - clear all registers\n");
+    printf("    t                 - perform register test, report summary result\n");
+    printf("    ir                - perform illegal read\n");
+    printf("    iw                - perform illegal write\n");
+    printf("    h                 - show help (this text)\n");
+}
+
 int main(int argc, char *argv[])
 {
     assert(argc >= 1);
 
     if(argc < 2) {
-        printf("Usage: %s r|w|c|t|ir|iw [ args ]\n", argv[0]);
+        printf("Usage: %s r|w|c|t|ir|iw|h [ args ]\n", argv[0]);
+        printf("(%s h  for help)\n", argv[0]);
         return -1;
     }
 
@@ -66,8 +81,15 @@ int main(int argc, char *argv[])
             return -1;
         }
         op = OP_ILL_WRITE;
+    } else if((strncmp(argv[1], "h", 1) == 0) ||
+            (strcmp(argv[1], "-help") == 0) ||
+            (strcmp(argv[1], "--help") == 0) ||
+            (strcmp(argv[1], "-h") == 0)) {
+        help(argv[0]);
+        return 0;
     } else {
         printf("Unknown operation `%s`\n", argv[1]);
+        printf("(%s h  for help)\n", argv[0]);
         return -1;
     }
 

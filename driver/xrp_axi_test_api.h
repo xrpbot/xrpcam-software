@@ -39,10 +39,13 @@ struct xatest_sr_read_arg {
     __u32 val;
 };
 
-#define XASR_SW_STATE   1
-#define XASR_TIMER      2
-#define XASR_INT_STATUS 3
-#define XASR_INT_COUNT  4
+#define XASR_SW_STATE     1
+#define XASR_TIMER        2
+#define XASR_INT_STATUS   3
+#define XASR_INT_COUNT    4
+#define XASR_MEM_AW_COUNT 5
+#define XASR_MEM_W_COUNT  6
+#define XASR_MEM_B_COUNT  7
 
 #define XAIOC_READ           _IOWR('t', 0, struct xatest_read_arg)
 #define XAIOC_WRITE          _IOW('t', 1, struct xatest_write_arg)
@@ -54,6 +57,7 @@ struct xatest_sr_read_arg {
 #define XAIOC_TEST_ILL_READ  _IO('t', 7)
 #define XAIOC_TEST_ILL_WRITE _IO('t', 8)
 #define XAIOC_SR_READ        _IOWR('t', 9, struct xatest_sr_read_arg)
+#define XAIOC_TEST_DMA       _IOR('t', 10, struct xatest_test_result)
 
 struct xatest_event {
     __u32 swdata;

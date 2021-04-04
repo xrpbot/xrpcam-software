@@ -1,7 +1,10 @@
 from nmigen import *
+from nmigen.lib.fifo import SyncFIFO
 import axi
 from axi_reg_bank import AXIRegBank, Register_RO, Register_RW
 from int_ctrl import IntCtrl
+from test_data_source import TestDataSource
+from axi_writer import AXIWriter
 from ps7 import PS7
 
 class Top(Elaboratable):
@@ -26,6 +29,14 @@ class Top(Elaboratable):
         # ZedBoard platform
         led = [ platform.request("led", i) for i in range(0, 8) ]
         switch = [ platform.request("switch", i) for i in range(0, 8) ]
+
+        # AXI bus for CPU to access registers (gateware is slave)
+        axi_reg_bus = ps7.m_axi_gp0
+        m.d.comb += axi_reg_bus.aclk.eq(clk)
+
+        # AXI bus for writer to access main memory (gateware is master)
+        axi_mem_bus = ps7.s_axi_hp0
+        m.d.comb += axi_mem_bus.aclk.eq(clk)
 
         # Synchronize switch input to `sync' clock
         sw_tmp1 = Signal(len(switch))
@@ -56,9 +67,29 @@ class Top(Elaboratable):
         timer_sync = Signal(32)
         m.d.sync += timer_sync.eq(timer_sync+1)
 
-        # AXI
-        axi_bus = ps7.m_axi_gp0
-        m.d.comb += axi_bus.aclk.eq(clk)
+        # DMA
+        fifo = SyncFIFO(width=64, depth=4)
+        m.submodules += fifo
+
+        data_source = TestDataSource(fifo)
+        m.submodules += data_source
+
+        axi_writer = AXIWriter(axi_mem_bus, fifo)
+        m.submodules += axi_writer
+
+        # Transaction counters (memory bus)
+        cnt_mem_aw = Signal(32)
+        cnt_mem_w = Signal(32)
+        cnt_mem_b = Signal(32)
+
+        with m.If((axi_mem_bus.awvalid == 1) & (axi_mem_bus.awready == 1)):
+            m.d.sync += cnt_mem_aw.eq(cnt_mem_aw + 1)
+
+        with m.If((axi_mem_bus.wvalid == 1) & (axi_mem_bus.wready == 1)):
+            m.d.sync += cnt_mem_w.eq(cnt_mem_w + 1)
+
+        with m.If((axi_mem_bus.bvalid == 1) & (axi_mem_bus.bready == 1)):
+            m.d.sync += cnt_mem_b.eq(cnt_mem_b + 1)
 
         regs = []
 
@@ -88,36 +119,63 @@ class Top(Elaboratable):
         # Register #12 (0x40000030): interrupt count register (read-only)
         regs += [ int_ctrl.enable_reg, int_ctrl.status_reg, int_ctrl.count_reg ]
 
-        axi_slave = AXIRegBank(axi_bus, regs, 0x40000000)
+        # Register #13 (0x40000034): test data source: data register
+        # Register #14 (0x40000038): test data source: count register
+        # Register #16 (0x4000003C): test data source: status register
+        # Register #15 (0x40000040): test data source: control register
+        regs += [ data_source.data_reg, data_source.count_reg, data_source.status_reg, data_source.control_reg ]
+
+        # Register #17 (0x40000044): memory write address count
+        reg = Register_RO(cnt_mem_aw)
+        regs.append(reg)
+        m.submodules += reg
+
+        # Register #18 (0x40000048): memory write data count
+        reg = Register_RO(cnt_mem_w)
+        regs.append(reg)
+        m.submodules += reg
+
+        # Register #19 (0x4000004C): memory write response count
+        reg = Register_RO(cnt_mem_b)
+        regs.append(reg)
+        m.submodules += reg
+
+        # Register #20 (0x40000050): AXI writer: address register
+        # Register #21 (0x40000054): AXI writer: count register
+        # Register #22 (0x40000058): AXI writer: status register
+        # Register #23 (0x4000005C): AXI writer: control register
+        regs += [ axi_writer.addr_reg, axi_writer.count_reg, axi_writer.status_reg, axi_writer.control_reg ]
+
+        axi_slave = AXIRegBank(axi_reg_bus, regs, 0x40000000)
         m.submodules += axi_slave
 
-        # Transaction counters
-        cnt_aw = Signal(8)
-        cnt_w = Signal(8)
-        cnt_b = Signal(8)
-        cnt_ar = Signal(8)
-        cnt_r = Signal(8)
+        # Transaction counters (register bus)
+        cnt_reg_aw = Signal(8)
+        cnt_reg_w = Signal(8)
+        cnt_reg_b = Signal(8)
+        cnt_reg_ar = Signal(8)
+        cnt_reg_r = Signal(8)
 
-        with m.If((axi_bus.awvalid == 1) & (axi_bus.awready == 1)):
-            m.d.sync += cnt_aw.eq(cnt_aw+1)
+        with m.If((axi_reg_bus.awvalid == 1) & (axi_reg_bus.awready == 1)):
+            m.d.sync += cnt_reg_aw.eq(cnt_reg_aw + 1)
 
-        with m.If((axi_bus.wvalid == 1) & (axi_bus.wready == 1)):
-            m.d.sync += cnt_w.eq(cnt_w+1)
+        with m.If((axi_reg_bus.wvalid == 1) & (axi_reg_bus.wready == 1)):
+            m.d.sync += cnt_reg_w.eq(cnt_reg_w + 1)
 
-        with m.If((axi_bus.bvalid == 1) & (axi_bus.bready == 1)):
-            m.d.sync += cnt_b.eq(cnt_b + 1)
+        with m.If((axi_reg_bus.bvalid == 1) & (axi_reg_bus.bready == 1)):
+            m.d.sync += cnt_reg_b.eq(cnt_reg_b + 1)
 
-        with m.If((axi_bus.arvalid == 1) & (axi_bus.arready == 1)):
-            m.d.sync += cnt_ar.eq(cnt_ar + 1)
+        with m.If((axi_reg_bus.arvalid == 1) & (axi_reg_bus.arready == 1)):
+            m.d.sync += cnt_reg_ar.eq(cnt_reg_ar + 1)
 
-        with m.If((axi_bus.rvalid == 1) & (axi_bus.rready == 1)):
-            m.d.sync += cnt_r.eq(cnt_r + 1)
+        with m.If((axi_reg_bus.rvalid == 1) & (axi_reg_bus.rready == 1)):
+            m.d.sync += cnt_reg_r.eq(cnt_reg_r + 1)
 
-        m.d.comb += ps7.emiogpio_i[0:8].eq(cnt_aw)
-        m.d.comb += ps7.emiogpio_i[8:16].eq(cnt_w)
-        m.d.comb += ps7.emiogpio_i[16:24].eq(cnt_b)
-        m.d.comb += ps7.emiogpio_i[24:32].eq(cnt_ar)
-        m.d.comb += ps7.emiogpio_i[32:40].eq(cnt_r)
+        m.d.comb += ps7.emiogpio_i[0:8].eq(cnt_reg_aw)
+        m.d.comb += ps7.emiogpio_i[8:16].eq(cnt_reg_w)
+        m.d.comb += ps7.emiogpio_i[16:24].eq(cnt_reg_b)
+        m.d.comb += ps7.emiogpio_i[24:32].eq(cnt_reg_ar)
+        m.d.comb += ps7.emiogpio_i[32:40].eq(cnt_reg_r)
 
         m.d.comb += ps7.emiogpio_i[40:48].eq(regs[0].data_out[0:8])
 

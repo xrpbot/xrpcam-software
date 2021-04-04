@@ -12,9 +12,12 @@
 #include <linux/fs.h>
 #include <linux/poll.h>
 #include <linux/miscdevice.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/interrupt.h>
+#include <linux/dma-mapping.h>
+#include <linux/build_bug.h>
 #include <linux/fpga/fpga-mgr.h>
 #include <asm/io.h>
 
@@ -24,6 +27,7 @@
 
 #define XRP_TIMER_REG      0x24
 
+/* Interrupt test */
 #define XRP_INT_ENABLE_REG 0x28
 #define XRP_INT_ENABLE_REG__INT_ENABLE   0x1
 
@@ -32,6 +36,43 @@
 #define XRP_INT_STATUS_REG__INT_PENDING  0x0001
 
 #define XRP_INT_COUNT_REG  0x30
+
+/* Test data source */
+#define XRP_DS_DATA_REG    0x34
+
+#define XRP_DS_COUNT_REG   0x38
+
+#define XRP_DS_STATUS_REG  0x3C
+#define XRP_DS_STATUS_REG__BUSY 0x1
+
+#define XRP_DS_CONTROL_REG 0x40
+#define XRP_DS_CONTROL_REG__START 0x1
+
+/* AXI bus counters */
+#define XRP_MEM_AW_COUNT_REG 0x44
+
+#define XRP_MEM_W_COUNT_REG  0x48
+
+#define XRP_MEM_B_COUNT_REG  0x4C
+
+/* AXI writer */
+#define XRP_DMA_ADDR_REG   0x50
+
+#define XRP_DMA_COUNT_REG  0x54
+
+#define XRP_DMA_STATUS_REG 0x58
+#define XRP_DMA_STATUS_REG__BUSY  0x0001
+#define XRP_DMA_STATUS_REG__ERROR 0x0100
+#define XRP_DMA_STATUS_REG__ERROR_RESP_MASK 0x0600
+#define XRP_DMA_STATUS_REG__ERROR_RESP_SHIFT 9
+
+#define XRP_DMA_CONTROL_REG 0x5C
+#define XRP_DMA_CONTROL_REG__START 0x1
+
+
+#define DMA_BUFFER_SIZE (4*1024*1024)
+
+static DEFINE_MUTEX(dma_test_mutex);
 
 struct xatest_device {
     struct miscdevice miscdev;
@@ -214,6 +255,15 @@ static int xatest_sr_read(struct xatest_device *xadev, u32 reg, u32 *val)
         case XASR_INT_COUNT:
             *val = ioread32(xadev->regs + XRP_INT_COUNT_REG);
             return 0;
+        case XASR_MEM_AW_COUNT:
+            *val = ioread32(xadev->regs + XRP_MEM_AW_COUNT_REG);
+            return 0;
+        case XASR_MEM_W_COUNT:
+            *val = ioread32(xadev->regs + XRP_MEM_W_COUNT_REG);
+            return 0;
+        case XASR_MEM_B_COUNT:
+            *val = ioread32(xadev->regs + XRP_MEM_B_COUNT_REG);
+            return 0;
         default:
             dev_warn(xadev->dev, "attempted to read unknown special register");
             return -EINVAL;
@@ -228,6 +278,102 @@ static void xatest_enable_interrupt(struct xatest_device *xadev)
 static void xatest_disable_interrupt(struct xatest_device *xadev)
 {
     iowrite32(0, xadev->regs + XRP_INT_ENABLE_REG);
+}
+
+static DECLARE_WAIT_QUEUE_HEAD(dma_event_queue);
+
+static int xatest_test_dma(struct xatest_device *xadev)
+{
+    DEFINE_WAIT(wait);
+    u32 *dma_buf;
+    dma_addr_t dma_addr;
+    u32 data = 0xf000baaa;
+    size_t i;
+    int ret;
+
+    BUILD_BUG_ON_MSG((DMA_BUFFER_SIZE % 8) != 0, "DMA buffer size must be an integer multiple of 8 bytes");
+    BUILD_BUG_ON_MSG((DMA_BUFFER_SIZE / 8) <= 0, "DMA buffer size must not be zero");
+
+    if(mutex_lock_interruptible(&dma_test_mutex) != 0)
+        return -EALREADY;
+
+    dma_buf = devm_kmalloc(xadev->dev, DMA_BUFFER_SIZE, GFP_DMA32);
+    if(!dma_buf) {
+        dev_err(xadev->dev, "failed to allocate buffer");
+        mutex_unlock(&dma_test_mutex);
+        return -ENOMEM;
+    }
+
+    dev_info(xadev->dev, "allocated buffer at physical address 0x%x", __pa(dma_buf));
+
+    dma_addr = dma_map_single(xadev->dev, dma_buf, DMA_BUFFER_SIZE, DMA_FROM_DEVICE);
+    if(dma_mapping_error(xadev->dev, dma_addr)) {
+        dev_err(xadev->dev, "failed to map buffer");
+        mutex_unlock(&dma_test_mutex);
+        return -EINVAL;
+    }
+
+    dev_info(xadev->dev, "buffer mapped, dma_addr=0x%x", dma_addr);
+
+    if(dma_addr & 0x7) {
+        dev_err(xadev->dev, "DMA buffer is not 64-bit aligned");
+        dma_unmap_single(xadev->dev, dma_addr, DMA_BUFFER_SIZE, DMA_FROM_DEVICE);
+        mutex_unlock(&dma_test_mutex);
+        return -EINVAL;
+    }
+
+    /* configure test data source */
+    iowrite32(data, xadev->regs + XRP_DS_DATA_REG);
+    iowrite32(DMA_BUFFER_SIZE/8 - 1, xadev->regs + XRP_DS_COUNT_REG);
+    iowrite32(XRP_DS_CONTROL_REG__START, xadev->regs + XRP_DS_CONTROL_REG);
+
+    /* configure DMA engine */
+    iowrite32(dma_addr, xadev->regs + XRP_DMA_ADDR_REG);
+    /* XRP_DMA_COUNT_REG is number of 64-bit words to write, MINUS 1 */
+    iowrite32(DMA_BUFFER_SIZE/8 - 1, xadev->regs + XRP_DMA_COUNT_REG);
+
+    /* start DMA */
+    iowrite32(XRP_DMA_CONTROL_REG__START, xadev->regs + XRP_DMA_CONTROL_REG);
+
+    /* busy-wait for DMA completion */
+    while(ioread32(xadev->regs + XRP_DMA_STATUS_REG) & XRP_DMA_STATUS_REG__BUSY)
+        cpu_relax();
+
+    dma_unmap_single(xadev->dev, dma_addr, DMA_BUFFER_SIZE, DMA_FROM_DEVICE);
+
+    if(ioread32(xadev->regs + XRP_DMA_STATUS_REG) & XRP_DMA_STATUS_REG__ERROR) {
+        u32 error_resp = (ioread32(xadev->regs + XRP_DMA_STATUS_REG) & XRP_DMA_STATUS_REG__ERROR_RESP_MASK)
+            >> XRP_DMA_STATUS_REG__ERROR_RESP_SHIFT;
+        dev_err(xadev->dev, "DMA engine reports AXI error (%u)", error_resp);
+        devm_kfree(xadev->dev, dma_buf);
+        mutex_unlock(&dma_test_mutex);
+        return 2;
+    }
+
+    /* print out beginning of DMA buffer */
+    /* for(i=0; (i<16) && (i<(DMA_BUFFER_SIZE/8)); i++) {
+        dev_info(xadev->dev, "[%04x]  0x%08x 0x%08x", 8*i, dma_buf[2*i+0], dma_buf[2*i+1]);
+    } */
+
+    for(i=0; i<(DMA_BUFFER_SIZE/sizeof(u32)); i++) {
+        if(dma_buf[i] != data++) {
+            break;
+        }
+    }
+
+    devm_kfree(xadev->dev, dma_buf);
+
+    if(i != (DMA_BUFFER_SIZE/sizeof(u32))) {
+        dev_err(xadev->dev, "DMA buffer does not contain expected content");
+        ret = 1;
+    } else {
+        dev_info(xadev->dev, "DMA buffer content ok");
+        ret = 0;
+    }
+
+    mutex_unlock(&dma_test_mutex);
+
+    return ret;
 }
 
 static DECLARE_WAIT_QUEUE_HEAD(int_event_queue);
@@ -360,6 +506,15 @@ static long xatest_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             dev_dbg(xadev->dev, "read special: val=0x%x", val);
             xa_sr_read_arg.val = val;
             if(copy_to_user((void __user*) arg, &xa_sr_read_arg, sizeof(struct xatest_sr_read_arg)) != 0)
+                return -EFAULT;
+            return 0;
+
+        case XAIOC_TEST_DMA:
+            ret = xatest_test_dma(xadev);
+            if(ret < 0)
+                return ret;
+            xa_test_result.result = ret;
+            if(copy_to_user((void __user*) arg, &xa_test_result, sizeof(struct xatest_test_result)) != 0)
                 return -EFAULT;
             return 0;
 
@@ -531,6 +686,8 @@ static int __init xatest_probe(struct platform_device *pdev)
     /* only one device is supported */
     if(xatest_dev.dev)
         return -EBUSY;
+
+    mutex_init(&dma_test_mutex);
 
     xatest_dev.dev = &pdev->dev;
     xatest_dev.miscdev.parent = &pdev->dev;

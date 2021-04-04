@@ -121,6 +121,27 @@ writable through the AXI test userspace tool. However, some of them are
 readable as "special registers" to help with debugging, using `axi_test sr`.
 
 
+### DMA test
+
+The PL can act as an AXI master and access main memory in this way. This is
+used to implement direct memory access (DMA), where the gateware writes
+directly to system memory, without the data transfer going through the PS.
+
+The gateware contains a simple AXI writer that can write a specified number of
+words to a specified continuous address range. The data to be written is
+supplied through a FIFO. The gateware also contains a test data source that
+will generate a specified number of 64 bit words and put them into the FIFO.
+
+The test is initiated from userspace, using the `axi_test td` command. The
+kernel driver allocates a suitable region in memory, configures the test data
+source and the AXI writer and waits for the DMA to complete. Afterwards, it
+checks if the memory region contains the expected data and reports the test
+result to userspace. To aid debugging, the gateware contains counters that
+count the number of write addresses, write data and write responses on the AXI
+bus through which the AXI writer accesses memory. These are readable as
+"special registers", using `axi_test sr`.
+
+
 Building the tests
 ------------------
 
@@ -135,6 +156,7 @@ To run a simple simulation-based test suite:
     cd tests
     ./test_axi.py
     ./test_interrupt.py
+    ./test_axi_writer.py
     cd ..
 
 To synthesize a bitstream:

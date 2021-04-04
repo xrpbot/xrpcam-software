@@ -10,7 +10,7 @@
 
 #include <xrp_axi_test_api.h>
 
-enum op { OP_READ, OP_WRITE, OP_READ_ALL, OP_WRITE_ALL, OP_CLEAR_ALL, OP_SR_READ, OP_TEST, OP_ILL_READ, OP_ILL_WRITE };
+enum op { OP_READ, OP_WRITE, OP_READ_ALL, OP_WRITE_ALL, OP_CLEAR_ALL, OP_SR_READ, OP_TEST_REG, OP_TEST_DMA, OP_ILL_READ, OP_ILL_WRITE };
 
 void help(const char *prog_name)
 {
@@ -21,7 +21,8 @@ void help(const char *prog_name)
     printf("    w <reg>|all <val> - write <val> to register <reg>, or all to registers\n");
     printf("    c                 - clear all registers\n");
     printf("    sr                - read special registers\n");
-    printf("    t                 - perform register test, report summary result\n");
+    printf("    tr                - perform register test, report summary result\n");
+    printf("    td                - perform DMA test\n");
     printf("    ir                - perform illegal read\n");
     printf("    iw                - perform illegal write\n");
     printf("    h                 - show help (this text)\n");
@@ -32,7 +33,7 @@ int main(int argc, char *argv[])
     assert(argc >= 1);
 
     if(argc < 2) {
-        printf("Usage: %s r|w|c|t|ir|iw|h [ args ]\n", argv[0]);
+        printf("Usage: %s r|w|c|tr|td|ir|iw|h [ args ]\n", argv[0]);
         printf("(%s h  for help)\n", argv[0]);
         return -1;
     }
@@ -70,12 +71,18 @@ int main(int argc, char *argv[])
             return -1;
         }
         op = OP_SR_READ;
-    } else if(strncmp(argv[1], "t", 1) == 0) {
+    } else if(strncmp(argv[1], "tr", 2) == 0) {
         if(argc != 2) {
-            printf("Usage: %s t\n", argv[0]);
+            printf("Usage: %s tr\n", argv[0]);
             return -1;
         }
-        op = OP_TEST;
+        op = OP_TEST_REG;
+    } else if(strncmp(argv[1], "td", 2) == 0) {
+        if(argc != 2) {
+            printf("Usage: %s td\n", argv[0]);
+            return -1;
+        }
+        op = OP_TEST_DMA;
     } else if(strncmp(argv[1], "ir", 2) == 0) {
         if(argc != 2) {
             printf("Usage: %s ir\n", argv[0]);
@@ -206,7 +213,7 @@ int main(int argc, char *argv[])
             close(fd);
             return -2;
         }
-        printf("SW_STATE:   0x%08x\n", ioc_arg.val);
+        printf("SW_STATE:     0x%08x\n", ioc_arg.val);
 
         ioc_arg.sr = XASR_TIMER;
         if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
@@ -214,7 +221,7 @@ int main(int argc, char *argv[])
             close(fd);
             return -2;
         }
-        printf("TIMER:      %u\n", ioc_arg.val);
+        printf("TIMER:        %u\n", ioc_arg.val);
 
         ioc_arg.sr = XASR_INT_STATUS;
         if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
@@ -222,7 +229,7 @@ int main(int argc, char *argv[])
             close(fd);
             return -2;
         }
-        printf("INT_STATUS: 0x%08x\n", ioc_arg.val);
+        printf("INT_STATUS:   0x%08x\n", ioc_arg.val);
 
         ioc_arg.sr = XASR_INT_COUNT;
         if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
@@ -230,8 +237,32 @@ int main(int argc, char *argv[])
             close(fd);
             return -2;
         }
-        printf("INT_COUNT:  %u\n", ioc_arg.val);
-    } else if(op == OP_TEST) {
+        printf("INT_COUNT:    %u\n", ioc_arg.val);
+
+        ioc_arg.sr = XASR_MEM_AW_COUNT;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("MEM_AW_COUNT: %u\n", ioc_arg.val);
+
+        ioc_arg.sr = XASR_MEM_W_COUNT;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("MEM_W_COUNT:  %u\n", ioc_arg.val);
+
+        ioc_arg.sr = XASR_MEM_B_COUNT;
+        if(ioctl(fd, XAIOC_SR_READ, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("MEM_B_COUNT:  %u\n", ioc_arg.val);
+    } else if(op == OP_TEST_REG) {
         struct xatest_test_result ioc_arg;
         if(ioctl(fd, XAIOC_TEST_SMALL, &ioc_arg) < 0) {
             perror("ioctl");
@@ -251,6 +282,19 @@ int main(int argc, char *argv[])
             return -2;
         }
         printf("Unaligned read/write test: ");
+        if(ioc_arg.result == 0) {
+            printf("passed\n");
+        } else {
+            printf("FAILED (see kernel log for details)\n");
+        }
+    } else if(op == OP_TEST_DMA) {
+        struct xatest_test_result ioc_arg;
+        if(ioctl(fd, XAIOC_TEST_DMA, &ioc_arg) < 0) {
+            perror("ioctl");
+            close(fd);
+            return -2;
+        }
+        printf("DMA test: ");
         if(ioc_arg.result == 0) {
             printf("passed\n");
         } else {

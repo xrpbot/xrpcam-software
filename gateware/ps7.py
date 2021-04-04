@@ -5,6 +5,7 @@ class PS7(Elaboratable):
     def __init__(self):
         self.fclk = Signal(4)
         self.m_axi_gp0 = axi.AXI3Bus()
+        self.s_axi_hp0 = axi.AXI3Bus(id_bits=6, data_bits=64)
         self.irqf2p = Signal(16)
         self.emiogpio_i = Signal(64)
         self.emiogpio_o = Signal(64)
@@ -71,6 +72,54 @@ class PS7(Elaboratable):
             i_MAXIGP0BID     = self.m_axi_gp0.bid,
             i_MAXIGP0BRESP   = self.m_axi_gp0.bresp,
             i_MAXIGP0BVALID  = self.m_axi_gp0.bvalid,
-            o_MAXIGP0BREADY  = self.m_axi_gp0.bready)
+            o_MAXIGP0BREADY  = self.m_axi_gp0.bready,
+
+            # S_AXI_HP0
+            i_SAXIHP0ACLK    = self.s_axi_hp0.aclk,
+            o_SAXIHP0ARESETN = self.s_axi_hp0.areset_n,
+
+            i_SAXIHP0AWID    = self.s_axi_hp0.awid,
+            i_SAXIHP0AWADDR  = self.s_axi_hp0.awaddr,
+            i_SAXIHP0AWLEN   = self.s_axi_hp0.awlen,
+            i_SAXIHP0AWSIZE  = self.s_axi_hp0.awsize,
+            i_SAXIHP0AWBURST = self.s_axi_hp0.awburst,
+            i_SAXIHP0AWLOCK  = self.s_axi_hp0.awlock,
+            i_SAXIHP0AWCACHE = self.s_axi_hp0.awcache,
+            i_SAXIHP0AWPROT  = self.s_axi_hp0.awprot,
+            i_SAXIHP0AWQOS   = self.s_axi_hp0.awqos,
+            i_SAXIHP0AWVALID = self.s_axi_hp0.awvalid,
+            o_SAXIHP0AWREADY = self.s_axi_hp0.awready,
+
+            i_SAXIHP0ARID    = self.s_axi_hp0.arid,
+            i_SAXIHP0ARADDR  = self.s_axi_hp0.araddr,
+            i_SAXIHP0ARLEN   = self.s_axi_hp0.arlen,
+            i_SAXIHP0ARSIZE  = self.s_axi_hp0.arsize,
+            i_SAXIHP0ARBURST = self.s_axi_hp0.arburst,
+            i_SAXIHP0ARLOCK  = self.s_axi_hp0.arlock,
+            i_SAXIHP0ARCACHE = self.s_axi_hp0.arcache,
+            i_SAXIHP0ARPROT  = self.s_axi_hp0.arprot,
+            i_SAXIHP0ARQOS   = self.s_axi_hp0.arqos,
+            i_SAXIHP0ARVALID = self.s_axi_hp0.arvalid,
+            o_SAXIHP0ARREADY = self.s_axi_hp0.arready,
+
+            i_SAXIHP0WID     = self.s_axi_hp0.wid,
+            i_SAXIHP0WDATA   = self.s_axi_hp0.wdata,
+            i_SAXIHP0WSTRB   = self.s_axi_hp0.wstrb,
+            i_SAXIHP0WLAST   = self.s_axi_hp0.wlast,
+            i_SAXIHP0WVALID  = self.s_axi_hp0.wvalid,
+            o_SAXIHP0WREADY  = self.s_axi_hp0.wready,
+
+            o_SAXIHP0RID     = self.s_axi_hp0.rid,
+            o_SAXIHP0RDATA   = self.s_axi_hp0.rdata,
+            o_SAXIHP0RRESP   = self.s_axi_hp0.rresp,
+            o_SAXIHP0RLAST   = self.s_axi_hp0.rlast,
+            o_SAXIHP0RVALID  = self.s_axi_hp0.rvalid,
+            i_SAXIHP0RREADY  = self.s_axi_hp0.rready,
+
+            o_SAXIHP0BID     = self.s_axi_hp0.bid,
+            o_SAXIHP0BRESP   = self.s_axi_hp0.bresp,
+            o_SAXIHP0BVALID  = self.s_axi_hp0.bvalid,
+            i_SAXIHP0BREADY  = self.s_axi_hp0.bready
+        )
 
         return m

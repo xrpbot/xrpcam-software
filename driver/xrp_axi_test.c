@@ -69,6 +69,12 @@
 #define XRP_DMA_CONTROL_REG 0x5C
 #define XRP_DMA_CONTROL_REG__START 0x1
 
+#define XRP_DMA_CONFIG_REG 0x60
+#define XRP_DMA_CONFIG_REG__INT_ENABLE 0x1
+
+#define XRP_DMA_INT_STATUS_REG 0x64
+#define XRP_DMA_INT_STATUS_REG__INT_PENDING 0x1
+
 
 #define DMA_BUFFER_SIZE (4*1024*1024)
 
@@ -332,12 +338,26 @@ static int xatest_test_dma(struct xatest_device *xadev)
     /* XRP_DMA_COUNT_REG is number of 64-bit words to write, MINUS 1 */
     iowrite32(DMA_BUFFER_SIZE/8 - 1, xadev->regs + XRP_DMA_COUNT_REG);
 
+    /* enable DMA completion interrupt */
+    iowrite32(XRP_DMA_CONFIG_REG__INT_ENABLE, xadev->regs + XRP_DMA_CONFIG_REG);
+
+    prepare_to_wait(&dma_event_queue, &wait, TASK_UNINTERRUPTIBLE);
+
     /* start DMA */
     iowrite32(XRP_DMA_CONTROL_REG__START, xadev->regs + XRP_DMA_CONTROL_REG);
 
-    /* busy-wait for DMA completion */
-    while(ioread32(xadev->regs + XRP_DMA_STATUS_REG) & XRP_DMA_STATUS_REG__BUSY)
-        cpu_relax();
+    while(1) {
+        schedule();
+
+        finish_wait(&dma_event_queue, &wait);
+
+        if(!(ioread32(xadev->regs + XRP_DMA_STATUS_REG) & XRP_DMA_STATUS_REG__BUSY))
+            break;
+
+        dev_warn(xadev->dev, "DMA event received, but DMA engine is still busy");
+
+        prepare_to_wait(&dma_event_queue, &wait, TASK_UNINTERRUPTIBLE);
+    }
 
     dma_unmap_single(xadev->dev, dma_addr, DMA_BUFFER_SIZE, DMA_FROM_DEVICE);
 
@@ -376,8 +396,33 @@ static int xatest_test_dma(struct xatest_device *xadev)
     return ret;
 }
 
+static DEFINE_SPINLOCK(dma_irq_lock);
+
+static irqreturn_t xatest_dma_isr(int irq, void *dev_id)
+{
+    struct xatest_device *xadev = (struct xatest_device *) dev_id;
+
+    spin_lock(&dma_irq_lock);
+
+    if(!ioread32(xadev->regs + XRP_DMA_INT_STATUS_REG) & XRP_DMA_INT_STATUS_REG__INT_PENDING) {
+        dev_warn(xadev->dev, "DMA completion handler called, but no interrupt was pending");
+        spin_unlock(&dma_irq_lock);
+        return IRQ_NONE;
+    }
+
+    /* acknowledge interrupt to hardware */
+    iowrite32(XRP_DMA_INT_STATUS_REG__INT_PENDING, xadev->regs + XRP_DMA_INT_STATUS_REG);
+
+    wake_up(&dma_event_queue);
+
+    dev_info(xadev->dev, "DMA completion interrupt");
+
+    spin_unlock(&dma_irq_lock);
+    return IRQ_HANDLED;
+}
+
 static DECLARE_WAIT_QUEUE_HEAD(int_event_queue);
-static DEFINE_SPINLOCK(irq_lock);
+static DEFINE_SPINLOCK(inttest_irq_lock);
 
 #define XATEST_CIRC_BUF_SIZE 16
 
@@ -392,13 +437,13 @@ static struct xatest_circ_buf event_buf = {
     .tail = 0
 };
 
-static irqreturn_t xatest_isr(int irq, void *dev_id)
+static irqreturn_t xatest_inttest_isr(int irq, void *dev_id)
 {
     struct xatest_device *xadev = (struct xatest_device *) dev_id;
     u32 swdata, timestamp;
     int tail;
 
-    spin_lock(&irq_lock);
+    spin_lock(&inttest_irq_lock);
     /* acknowledge interrupt to hardware */
     iowrite32(XRP_INT_STATUS_REG__INT_PENDING, xadev->regs + XRP_INT_STATUS_REG);
 
@@ -414,7 +459,7 @@ static irqreturn_t xatest_isr(int irq, void *dev_id)
     } else {
         /* buffer overrun, data lost */
     }
-    spin_unlock(&irq_lock);
+    spin_unlock(&inttest_irq_lock);
     return IRQ_HANDLED;
 }
 
@@ -730,9 +775,21 @@ static int __init xatest_probe(struct platform_device *pdev)
         goto out;
     }
 
-    ret = devm_request_irq(&pdev->dev, irq, xatest_isr, 0, dev_name(&pdev->dev), &xatest_dev);
+    ret = devm_request_irq(&pdev->dev, irq, xatest_inttest_isr, 0, dev_name(&pdev->dev), &xatest_dev);
     if(ret != 0) {
-        dev_err(&pdev->dev, "failed to register interrupt");
+        dev_err(&pdev->dev, "failed to register test interrupt");
+        goto out;
+    }
+
+    irq = platform_get_irq(pdev, 1);
+    if(irq <= 0) {
+        ret = -ENXIO;
+        goto out;
+    }
+
+    ret = devm_request_irq(&pdev->dev, irq, xatest_dma_isr, 0, dev_name(&pdev->dev), &xatest_dev);
+    if(ret != 0) {
+        dev_err(&pdev->dev, "failed to register DMA interrupt");
         goto out;
     }
 

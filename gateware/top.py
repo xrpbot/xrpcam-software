@@ -77,6 +77,8 @@ class Top(Elaboratable):
         axi_writer = AXIWriter(axi_mem_bus, fifo)
         m.submodules += axi_writer
 
+        m.d.comb += ps7.irqf2p[1].eq(axi_writer.int_out)
+
         # Transaction counters (memory bus)
         cnt_mem_aw = Signal(32)
         cnt_mem_w = Signal(32)
@@ -144,7 +146,9 @@ class Top(Elaboratable):
         # Register #21 (0x40000054): AXI writer: count register
         # Register #22 (0x40000058): AXI writer: status register
         # Register #23 (0x4000005C): AXI writer: control register
-        regs += [ axi_writer.addr_reg, axi_writer.count_reg, axi_writer.status_reg, axi_writer.control_reg ]
+        # Register #24 (0x40000060): AXI writer: config register
+        # Register #25 (0x40000064): AXI writer: interrupt status register
+        regs += [ axi_writer.addr_reg, axi_writer.count_reg, axi_writer.status_reg, axi_writer.control_reg, axi_writer.config_reg, axi_writer.int_status_reg ]
 
         axi_slave = AXIRegBank(axi_reg_bus, regs, 0x40000000)
         m.submodules += axi_slave

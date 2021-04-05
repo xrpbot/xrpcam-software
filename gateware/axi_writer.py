@@ -53,6 +53,26 @@ class AXIWriter_ControlReg:
         self.wstrb_in = Signal(4)
         self.data_out = Signal(32)
 
+class AXIWriter_ConfigReg:
+    """AXI writer: configuration register
+
+    Bit 0: INT_ENABLE. Set to 1 to enable interrupt once DMA transaction is completed.
+    """
+    def __init__(self):
+        self.data_in = Signal(32)
+        self.wstrb_in = Signal(4)
+        self.data_out = Signal(32)
+
+class AXIWriter_IntStatusReg:
+    """AXI writer: interrupt status register
+
+    Bit 0: INT_PENDING. 1: A completion interrupt is pending. Write 1 to clear.
+    """
+    def __init__(self):
+        self.data_in = Signal(32)
+        self.wstrb_in = Signal(4)
+        self.data_out = Signal(32)
+
 class AXIWriter(Elaboratable):
     def __init__(self, axi_bus, fifo):
         self.bus = axi_bus
@@ -62,9 +82,14 @@ class AXIWriter(Elaboratable):
         self.count_reg = AXIWriter_CountReg()
         self.status_reg = AXIWriter_StatusReg()
         self.control_reg = AXIWriter_ControlReg()
+        self.config_reg = AXIWriter_ConfigReg()
+        self.int_status_reg = AXIWriter_IntStatusReg()
 
         # Data FIFO
         self.fifo = fifo
+
+        # Interrupt output
+        self.int_out = Signal()
 
     def elaborate(self, platform):
         # Implementation note on AXI bursts: the maximum burst length supported
@@ -122,6 +147,27 @@ class AXIWriter(Elaboratable):
         # Control register logic
         m.d.comb += start.eq(self.control_reg.data_in[0] & self.control_reg.wstrb_in[0])
         m.d.comb += self.control_reg.data_out.eq(0)
+
+        # Config register logic
+        with m.If(self.config_reg.wstrb_in[0]):
+            m.d.sync += int_enable.eq(self.config_reg.data_in[0])
+
+        m.d.comb += self.config_reg.data_out.eq(Cat(int_enable, Const(0, 31)))
+
+        # Interrupt logic
+        busy_delay = Signal()
+
+        m.d.sync += busy_delay.eq(busy)
+
+        with m.If((busy == 0) & (busy_delay == 1) & (int_enable == 1)):
+            m.d.sync += int_pending.eq(1)
+        with m.Else():
+            with m.If(self.int_status_reg.data_in[0] & self.int_status_reg.wstrb_in[0]):
+                m.d.sync += int_pending.eq(0)
+
+        m.d.comb += self.int_out.eq(int_pending)
+
+        m.d.comb += self.int_status_reg.data_out.eq(Cat(int_pending, Const(0, 31)))
 
         # DMA engine
         n_data = Signal(32)

@@ -20,11 +20,13 @@ DMA_ADDR_REG =       0x40000000
 DMA_COUNT_REG =      0x40000004
 DMA_STATUS_REG =     0x40000008
 DMA_CONTROL_REG =    0x4000000C
+DMA_CONFIG_REG =     0x40000010
+DMA_INT_STATUS_REG = 0x40000014
 
-DS_DATA_REG =        0x40000010
-DS_COUNT_REG =       0x40000014
-DS_STATUS_REG =      0x40000018
-DS_CONTROL_REG =     0x4000001C
+DS_DATA_REG =        0x40000018
+DS_COUNT_REG =       0x4000001C
+DS_STATUS_REG =      0x40000020
+DS_CONTROL_REG =     0x40000024
 
 # Python dictionary backing the simulated memory
 memory = dict()
@@ -93,10 +95,11 @@ def dma_test(addr, num_words, fifo=None, exp_error=0):
             data += 2
         yield fifo.w_en.eq(0)
 
-    # configure AXI writer: start address, count
+    # configure AXI writer: start address, count; enable completion interrupt
     axi_transact = [
         TWrite(DMA_ADDR_REG, addr, exp_resp=AXI3Response.OKAY),
-        TWrite(DMA_COUNT_REG, num_words-1, exp_resp=AXI3Response.OKAY)
+        TWrite(DMA_COUNT_REG, num_words-1, exp_resp=AXI3Response.OKAY),
+        TWrite(DMA_CONFIG_REG, 0x1, exp_resp=AXI3Response.OKAY)
     ]
     yield from axi_write(axi_reg_bus, axi_transact, delay=0)
 
@@ -161,11 +164,11 @@ def dma_test(addr, num_words, fifo=None, exp_error=0):
                 yield Tick()
             data += 2
 
-    # wait for DMA completion
-    while ((yield axi_writer.status_reg.data_out[0]) == 1):
+    # wait for DMA completion interrupt
+    while ((yield axi_writer.int_out) == 0):
         yield Tick()
 
-    # verify that potential errors are correctly reported
+    # verify that BUSY bit is clear and potential errors are correctly reported
     if exp_error != 0:
         axi_transact = [
             TRead(DMA_STATUS_REG, exp_data=(0x0100 | (exp_error << 9)), exp_resp=AXI3Response.OKAY)
@@ -197,6 +200,14 @@ def dma_test(addr, num_words, fifo=None, exp_error=0):
     if not mem_check:
         print("Error: memory check failed")
     # print("mem_check: %s" % str(mem_check))
+
+    # acknowledge completion interrupt
+    axi_transact = [
+        TWrite(DMA_INT_STATUS_REG, 0x1, exp_resp=AXI3Response.OKAY)
+    ]
+    yield from axi_write(axi_reg_bus, axi_transact, delay=0)
+
+    assert((yield axi_writer.int_out) == 0)
 
 def mem_sim_process():
     yield Passive()
@@ -273,7 +284,8 @@ if use_test_data_source:
 axi_writer = AXIWriter(axi_mem_bus, data_fifo)
 m.submodules += axi_writer
 
-regs = [ axi_writer.addr_reg, axi_writer.count_reg, axi_writer.status_reg, axi_writer.control_reg ]
+regs = [ axi_writer.addr_reg, axi_writer.count_reg, axi_writer.status_reg, axi_writer.control_reg,
+         axi_writer.config_reg, axi_writer.int_status_reg ]
 
 if use_test_data_source:
     regs += [ data_source.data_reg, data_source.count_reg, data_source.status_reg, data_source.control_reg ]
